@@ -54,6 +54,6 @@ curl -X POST http://localhost:3000/v1/chat/completions \
 ## 进阶配置
 
 1. 代理配置要求：
-    - 需提供IPv6段（/48以上）
+    - 需提供IPv6段
     - 需保证每个API密钥对应不同IP出口
     - 代理需支持HTTP Basic认证
