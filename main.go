@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"container/list"
 	"crypto/md5"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -13,9 +15,9 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -30,22 +32,114 @@ func (e *HttpError) Error() string {
 }
 
 const (
-	BASE_URL                 = "https://generativelanguage.googleapis.com"
-	API_VERSION              = "v1beta"
-	API_CLIENT               = "genai-js/0.21.0"
-	DEFAULT_MODEL            = "gemini-1.5-pro-latest"
-	DEFAULT_EMBEDDINGS_MODEL = "text-embedding-004"
+	BaseUrl                = "https://generativelanguage.googleapis.com"
+	ApiVersion             = "v1beta"
+	ApiClient              = "genai-js/0.21.0"
+	DefaultModel           = "gemini-1.5-pro-latest"
+	DefaultEmbeddingsModel = "text-embedding-004"
 )
 
-func main() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "3000"
+type cacheEntry struct {
+	key        string
+	insertTime int64 // 使用纳秒时间戳提高比较效率
+	listElem   *list.Element
+}
+
+type Cache struct {
+	mu      sync.Mutex
+	data    map[string]*cacheEntry
+	list    *list.List // 维护插入顺序（链表头为最旧元素）
+	maxSize int
+}
+
+func NewCache(maxSize int) *Cache {
+	return &Cache{
+		data:    make(map[string]*cacheEntry),
+		list:    list.New(),
+		maxSize: maxSize,
+	}
+}
+
+var (
+	keyCache     *Cache
+	storeKeyList []string
+	proxyCIDR    string
+	authKey      string
+)
+
+func InitEnv() {
+	// If no API keys in header, try to get from environment
+	envTokens := os.Getenv("TOKENS")
+	if envTokens != "" {
+		apiKeys := strings.Split(envTokens, ",")
+		storeKeyList = append(storeKeyList, apiKeys...)
+	}
+	keyCache = NewCache(1_000_000)
+	proxyCIDR = os.Getenv("proxy_cidr")
+	authKey = os.Getenv("AUTH_KEY")
+}
+
+func (c *Cache) selectLessUseKey(keys []string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	var (
+		candidateKeys []string
+		existingKeys  []string
+		oldestKey     string
+		oldestTime    int64 = -1
+	)
+
+	for _, key := range keys {
+		if entry, exists := c.data[key]; exists {
+			existingKeys = append(existingKeys, key)
+			if oldestTime == -1 || entry.insertTime < oldestTime {
+				oldestTime = entry.insertTime
+				oldestKey = key
+			}
+		} else {
+			candidateKeys = append(candidateKeys, key)
+		}
 	}
 
-	http.HandleFunc("/", handleRequest)
-	log.Printf("Server listening on port %s", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	if len(candidateKeys) > 0 {
+		useKey := candidateKeys[rand.Intn(len(candidateKeys))]
+		c.Add(useKey)
+		return useKey
+	}
+
+	c.Add(oldestKey)
+	return oldestKey
+}
+
+func (c *Cache) Add(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// 存在性检查
+	if entry, exists := c.data[key]; exists {
+		// 移动现有元素到链表尾部表示最近访问
+		c.list.MoveToBack(entry.listElem)
+		entry.insertTime = time.Now().UnixNano()
+		return
+	}
+
+	// 新增元素时的淘汰逻辑
+	if c.list.Len() >= c.maxSize {
+		// 淘汰策略：移除最旧元素
+		if oldestElem := c.list.Front(); oldestElem != nil {
+			delete(c.data, oldestElem.Value.(string))
+			c.list.Remove(oldestElem)
+		}
+	}
+
+	// 添加新元素到链表尾部
+	elem := c.list.PushBack(key)
+	c.data[key] = &cacheEntry{
+		key:        key,
+		insertTime: time.Now().UnixNano(),
+		listElem:   elem,
+	}
 }
 
 func handleRequest(w http.ResponseWriter, r *http.Request) {
@@ -66,7 +160,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Select a random API key
-	apiKey := selectRandomKey(apiKeys)
+	apiKey := keyCache.selectLessUseKey(apiKeys)
 	log.Printf("use : %s", apiKey)
 
 	// Route to appropriate handler based on path
@@ -88,7 +182,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 			handleError(w, &HttpError{"Method not allowed", http.StatusMethodNotAllowed})
 			return
 		}
-		handleModels(w, r, apiKey)
+		handleModels(w, apiKey)
 	default:
 		handleError(w, &HttpError{"404 Not Found", http.StatusNotFound})
 	}
@@ -98,32 +192,23 @@ func getAPIKeys(r *http.Request) ([]string, error) {
 	// Get API keys from Authorization header
 	auth := r.Header.Get("Authorization")
 	if auth != "" {
-		parts := strings.Split(auth, " ")
-		if len(parts) == 2 {
-			apiKeys := strings.Split(parts[1], ",")
-			if len(apiKeys) > 0 {
-				return apiKeys, nil
+		if auth == authKey {
+			if len(storeKeyList) > 0 {
+				return storeKeyList, nil
 			}
-		}
-	}
-
-	// If no API keys in header, try to get from environment
-	envTokens := os.Getenv("TOKENS")
-	if envTokens != "" {
-		apiKeys := strings.Split(envTokens, ",")
-		if len(apiKeys) > 0 {
-			return apiKeys, nil
+		} else {
+			parts := strings.Split(auth, " ")
+			if len(parts) == 2 {
+				apiKeys := strings.Split(parts[1], ",")
+				if len(apiKeys) > 0 {
+					return apiKeys, nil
+				}
+			}
 		}
 	}
 
 	// If no API keys found, return error
 	return nil, &HttpError{"403 No Auth", http.StatusForbidden}
-}
-
-func selectRandomKey(keys []string) string {
-	// Initialize random with current time
-	rand.Seed(time.Now().UnixNano())
-	return keys[rand.Intn(len(keys))]
 }
 
 func handleOPTIONS(w http.ResponseWriter) {
@@ -152,7 +237,7 @@ func fixCors(w http.ResponseWriter) {
 
 func makeHeaders(apiKey string, moreHeaders map[string]string) map[string]string {
 	headers := map[string]string{
-		"x-goog-api-client": API_CLIENT,
+		"x-goog-api-client": ApiClient,
 	}
 
 	if apiKey != "" {
@@ -168,14 +253,8 @@ func makeHeaders(apiKey string, moreHeaders map[string]string) map[string]string
 }
 
 // Calculate proxy URL from token using MD5->BigInt and CIDR calculation
-func getProxyURL(token string) (string, error) {
-	// Get proxy configuration from environment
-	proxyCIDR := os.Getenv("proxy_cidr")
-	proxyUser := os.Getenv("proxy_user")
-	proxyPass := os.Getenv("proxy_pass")
-	proxyPort := os.Getenv("proxy_port")
-
-	if proxyCIDR == "" || proxyUser == "" || proxyPass == "" || proxyPort == "" {
+func getProxyIpv6EndPoint(token string) (string, error) {
+	if proxyCIDR == "" {
 		return "", nil // If any proxy setting is missing, don't use proxy
 	}
 
@@ -215,11 +294,7 @@ func getProxyURL(token string) (string, error) {
 	// Convert to IPv6 address
 	ip := generateIPv6(ipNet, index)
 
-	// Form proxy URL
-	proxyURL := fmt.Sprintf("http://%s:%s@[%s]:%s",
-		proxyUser, proxyPass, ip.String(), proxyPort)
-
-	return proxyURL, nil
+	return ip.String(), nil
 }
 
 // Generate IPv6 address from CIDR and index
@@ -240,34 +315,43 @@ func generateIPv6(ipNet *net.IPNet, index *big.Int) net.IP {
 	result := make([]byte, 16)
 	copy(result[16-len(ipBytes):], ipBytes)
 
-	return net.IP(result)
+	return result
 }
 
 // Create an HTTP client with proxy
 func createHTTPClient(token string) (*http.Client, error) {
-	proxyURL, err := getProxyURL(token)
+	endPointIP, err := getProxyIpv6EndPoint(token)
 	if err != nil {
 		return nil, err
 	}
 
-	client := &http.Client{
-		Timeout: time.Second * 30,
-	}
-
-	if proxyURL != "" {
-		proxy, err := url.Parse(proxyURL)
-		if err != nil {
-			return nil, err
+	if endPointIP != "" {
+		dialer := &net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+			LocalAddr: &net.TCPAddr{
+				IP:   net.ParseIP(endPointIP),
+				Port: 0,
+			},
 		}
 
 		transport := &http.Transport{
-			Proxy: http.ProxyURL(proxy),
+			Proxy:       http.ProxyFromEnvironment,
+			DialContext: dialer.DialContext,
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
 		}
 
-		client.Transport = transport
+		return &http.Client{
+			Transport: transport,
+			Timeout:   30 * time.Second,
+		}, nil
 	}
 
-	return client, nil
+	return &http.Client{
+		Timeout: time.Second * 30,
+	}, nil
 }
 
 // Models response struct
@@ -290,16 +374,16 @@ type OpenAIModel struct {
 	OwnedBy string `json:"owned_by"`
 }
 
-func handleModels(w http.ResponseWriter, r *http.Request, apiKey string) {
+func handleModels(w http.ResponseWriter, apiKey string) {
 	client, err := createHTTPClient(apiKey)
 	if err != nil {
 		handleError(w, err)
 		return
 	}
 
-	url := fmt.Sprintf("%s/%s/models", BASE_URL, API_VERSION)
+	modelUrl := fmt.Sprintf("%s/%s/models", BaseUrl, ApiVersion)
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", modelUrl, nil)
 	if err != nil {
 		handleError(w, err)
 		return
@@ -396,7 +480,7 @@ type GeminiEmbedding struct {
 	Values []float64 `json:"values"`
 }
 
-// OpenAI-compatible embeddings response
+// OpenAIEmbeddingsResponse OpenAI-compatible embeddings response
 type OpenAIEmbeddingsResponse struct {
 	Object string            `json:"object"`
 	Data   []OpenAIEmbedding `json:"data"`
@@ -443,8 +527,8 @@ func handleEmbeddings(w http.ResponseWriter, r *http.Request, apiKey string) {
 	// Determine model name
 	model := req.Model
 	if !strings.HasPrefix(model, "models/") {
-		model = "models/" + DEFAULT_EMBEDDINGS_MODEL
-		req.Model = DEFAULT_EMBEDDINGS_MODEL
+		model = "models/" + DefaultEmbeddingsModel
+		req.Model = DefaultEmbeddingsModel
 	}
 
 	// Create API request
@@ -478,7 +562,7 @@ func handleEmbeddings(w http.ResponseWriter, r *http.Request, apiKey string) {
 	}
 
 	// Create request
-	url := fmt.Sprintf("%s/%s/%s:batchEmbedContents", BASE_URL, API_VERSION, model)
+	url := fmt.Sprintf("%s/%s/%s:batchEmbedContents", BaseUrl, ApiVersion, model)
 	httpReq, err := http.NewRequest("POST", url, bytes.NewReader(reqBody))
 	if err != nil {
 		handleError(w, err)
@@ -987,15 +1071,6 @@ func transformCandidate(candidate GeminiCandidate, isStream bool) OpenAIChoice {
 	return choice
 }
 
-// Transform usage
-func transformUsage(usage GeminiUsage) OpenAIUsage {
-	return OpenAIUsage{
-		PromptTokens:     usage.PromptTokenCount,
-		CompletionTokens: usage.CandidatesTokenCount,
-		TotalTokens:      usage.TotalTokenCount,
-	}
-}
-
 // Process completions response
 func processCompletionsResponse(data *GeminiResponse, model string, id string) (*OpenAIChatCompletion, error) {
 	choices := make([]OpenAIChoice, 0, len(data.Candidates))
@@ -1021,7 +1096,7 @@ func processCompletionsResponse(data *GeminiResponse, model string, id string) (
 }
 
 // Handle non-streaming completions
-func handleNonStreamingCompletions(w http.ResponseWriter, req *ChatCompletionsRequest, geminiReq *GeminiRequest, apiKey, model, url string) {
+func handleNonStreamingCompletions(w http.ResponseWriter, geminiReq *GeminiRequest, apiKey, model, url string) {
 	// Convert request to JSON
 	reqBody, err := json.Marshal(geminiReq)
 	if err != nil {
@@ -1260,7 +1335,7 @@ func handleCompletions(w http.ResponseWriter, r *http.Request, apiKey string) {
 	}
 
 	// Set default model if not specified
-	model := DEFAULT_MODEL
+	model := DefaultModel
 	if req.Model != "" {
 		if strings.HasPrefix(req.Model, "models/") {
 			model = req.Model[7:] // Remove "models/" prefix
@@ -1278,13 +1353,26 @@ func handleCompletions(w http.ResponseWriter, r *http.Request, apiKey string) {
 
 	// Build URL based on stream option
 	task := "generateContent"
-	url := fmt.Sprintf("%s/%s/models/%s:%s", BASE_URL, API_VERSION, model, task)
+	url := fmt.Sprintf("%s/%s/models/%s:%s", BaseUrl, ApiVersion, model, task)
 
 	if req.Stream {
 		task = "streamGenerateContent"
-		url = fmt.Sprintf("%s/%s/models/%s:%s?alt=sse", BASE_URL, API_VERSION, model, task)
+		url = fmt.Sprintf("%s/%s/models/%s:%s?alt=sse", BaseUrl, ApiVersion, model, task)
 		handleStreamingCompletions(w, &req, geminiReq, apiKey, model, url)
 	} else {
-		handleNonStreamingCompletions(w, &req, geminiReq, apiKey, model, url)
+		handleNonStreamingCompletions(w, geminiReq, apiKey, model, url)
 	}
+}
+
+func main() {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "3000"
+	}
+
+	InitEnv()
+
+	http.HandleFunc("/", handleRequest)
+	log.Printf("Server listening on port %s", port)
+	log.Fatal(http.ListenAndServe(":"+port, nil))
 }

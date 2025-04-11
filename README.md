@@ -1,7 +1,5 @@
 # Gemini to OpenAI API 适配器
 
-[English Version](README_en.md)
-
 ## 项目简介
 
 本项目实现Google Gemini API到OpenAI API的协议转换适配器，支持以下功能：
@@ -22,22 +20,17 @@ docker run -d \
   -p 3000:3000 \
   -e TOKENS="your_google_api_key1,your_google_api_key2" \
   -e proxy_cidr="2001:db8::/64" \
-  -e proxy_user="user" \
-  -e proxy_pass="pass" \
-  -e proxy_port="7890" \
   ghcr.io/blee0036/gemini2oai:latest
 ```
 
 ### 环境参数说明
 
-| 参数名        | 必填 | 说明                      | 示例                  |
-|------------|----|-------------------------|---------------------|
-| TOKENS     | 否  | 默认 Google API密钥列表（逗号分隔） | "api_key1,api_key2" |
-| PORT       | 否  | 服务监听端口（默认3000）          | "8080"              |
-| proxy_cidr | 否  | IPv6代理CIDR段             | "2001:db8::/64"     |
-| proxy_user | 否  | 代理用户名                   | "proxyuser"         |
-| proxy_pass | 否  | 代理密码                    | "proxypass"         |
-| proxy_port | 否  | 代理端口                    | "7890"              |
+| 参数名        | 必填  | 说明                      | 示例                  |
+|------------|-----|-------------------------|---------------------|
+| TOKENS     | 否   | 默认 Google API密钥列表（逗号分隔） | "api_key1,api_key2" |
+| PORT       | 否   | 服务监听端口（默认3000）          | "8080"              |
+| proxy_cidr | 否   | IPv6代理CIDR段             | "2001:db8::/64"     |
+| 	AUTH_KEY  | 	否	 | 接口访问鉴权密钥                | "testKey"           |
 
 ## 验证服务
 
@@ -55,5 +48,4 @@ curl -X POST http://localhost:3000/v1/chat/completions \
 
 1. 代理配置要求：
     - 需提供IPv6段
-    - 需保证每个API密钥对应不同IP出口
-    - 代理需支持HTTP Basic认证
+    - 程序会自动将API密钥对应不同IP出口
