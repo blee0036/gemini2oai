@@ -51,7 +51,7 @@ jobs:
           GOARCH: ${{ matrix.arch }}
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
-          OUTPUT="myapp-${VERSION}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.suffix }}"
+          OUTPUT="gemini2oai-${VERSION}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.suffix }}"
           
           # 直接在根目录构建
           go build \
