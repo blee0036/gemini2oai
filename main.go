@@ -325,6 +325,8 @@ func createHTTPClient(token string) (*http.Client, error) {
 		return nil, err
 	}
 
+	log.Printf("use : %s, ipv6: %s", token, endPointIP)
+
 	if endPointIP != "" {
 		dialer := &net.Dialer{
 			Timeout:   30 * time.Second,

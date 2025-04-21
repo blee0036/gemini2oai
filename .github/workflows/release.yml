@@ -1,4 +1,4 @@
-name: Releaser
+name: Manual Cross-Platform Release
 
 on:
   push:
@@ -6,21 +6,88 @@ on:
       - 'v*'
 
 jobs:
-  goreleaser:
+  build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            suffix: ""
+          - os: linux
+            arch: arm64
+            suffix: ""
+          - os: windows
+            arch: amd64
+            suffix: .exe
+          - os: windows
+            arch: arm64
+            suffix: .exe
+          - os: darwin
+            arch: amd64
+            suffix: ""
+          - os: darwin
+            arch: arm64
+            suffix: ""
     steps:
-      - name: Checkout
-        uses: actions/checkout@v2
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v2
+        uses: actions/setup-go@v4
         with:
-          go-version: 1.23.x
+          go-version: '1.23.x'
 
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v2
+      - name: Setup QEMU (跨平台构建)
+        uses: docker/setup-qemu-action@v3
+        if: matrix.arch == 'arm64'
+
+      - name: Build binary
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          OUTPUT="myapp-${VERSION}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.suffix }}"
+          
+          # 直接在根目录构建
+          go build \
+          -ldflags "-X main.version=${VERSION}" \
+          -o "${OUTPUT}"
+          
+          echo "BINARY=${OUTPUT}" >> $GITHUB_ENV
+
+      - name: Generate checksum
+        run: |
+          sha256sum "${{ env.BINARY }}" > "${{ env.BINARY }}.sha256"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
         with:
-          version: latest
-          args: release
+          name: ${{ matrix.os }}-${{ matrix.arch }}-build
+          path: |
+            ${{ env.BINARY }}
+            ${{ env.BINARY }}.sha256
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/**/*
+          draft: false
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
