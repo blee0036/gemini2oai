@@ -1,16 +1,14 @@
-```markdown
 # Gemini2OpenAI 代理服务
 
 ## 概述
 
-```bash
 本服务提供将 Google Gemini API 转换为 OpenAI 兼容格式的代理功能，支持以下特性：
+
 - 完整的 OpenAI API 格式兼容
 - 多密钥轮询与负载均衡
 - IPv6 CIDR 代理支持
 - 流式响应支持
 - 自动故障恢复
-```
 
 ## 下载安装
 
@@ -29,27 +27,27 @@ https://github.com/blee0036/gemini2oai/releases/download/v<版本>/gemini2oai-v<
 
 ## 配置参数
 
-```ini
 通过环境变量配置服务
 
-| 环境变量                  | 必填 | 说明                                                                 |
-|---------------------------|------|----------------------------------------------------------------------|
-| GEMINI2OAI_PORT                      | 否   | 服务监听端口，默认 3000                                              |
-| GEMINI2OAI_AUTH_KEY                  | 否   | 系统密钥认证头 (与用户自备密钥二选一)                                |
-| GEMINI2OAI_TOKENS                    | 否   | 系统内置密钥列表，多个用逗号分隔                                     |
-| GEMINI2OAI_PROXY_CIDR                | 否   | IPv6 CIDR 地址范围，格式：2001:db8::/32                              |
+| 环境变量                  | 必填 | 说明                              |
+|-----------------------|----|---------------------------------|
+| GEMINI2OAI_PORT       | 否  | 服务监听端口，默认 3000                  |
+| GEMINI2OAI_AUTH_KEY   | 否  | 系统密钥认证头 (与用户自备密钥二选一)            |
+| GEMINI2OAI_TOKENS     | 否  | 系统内置密钥列表，多个用逗号分隔                |
+| GEMINI2OAI_PROXY_CIDR | 否  | IPv6 CIDR 地址范围，格式：2001:db8::/32 |
 
 密钥优先级：
+
 1. 用户请求头 Authorization: Bearer <用户密钥>
 2. 系统内置 TOKENS (当 AUTH_KEY 匹配时)
-```
 
 ## 服务部署
 
 ### 1. 安装程序（必须 root 权限）
 
 ```bash
-sudo install -m 755 gemini2oai /usr/local/bin/
+chmod +x gemini2oai
+mv gemini2oai /usr/local/bin/
 ```
 
 ### 2. 创建配置文件
@@ -124,26 +122,5 @@ systemctl restart gemini2oai   # 重启服务
 ## 注意事项
 
 1. 必须使用 root 用户运行（网络出口绑定需要特权）
-2. 环境变量必须添加 GEMINI2OAI_ 前缀防止冲突
-3. PROXY_CIDR 需要完整的 IPv6 CIDR 格式
-4. 同时配置 AUTH_KEY 和 TOKENS 时，需 Authorization 头匹配 AUTH_KEY 才会使用系统密钥
-
-## 技术说明
-
-### 密钥调度逻辑
-
-```go
-if 用户提供有效API Key:
-使用用户密钥
-elif 系统配置AUTH_KEY且请求头匹配:
-轮询使用系统TOKENS else:
-返回403错误
-```
-
-### 代理地址生成公式
-
-$$
-\text{proxyIP} = \text{CIDR\_BASE} + (\text{MD5(API\_KEY)} \mod (\text{CIDR\_SIZE} - 20)) + 10
-$$
-
-```
+2. GEMINI2OAI_PROXY_CIDR 需要完整的 IPv6 CIDR 格式
+3. 同时配置 AUTH_KEY 和 TOKENS 时，需 Authorization 头匹配 AUTH_KEY 才会使用系统密钥
