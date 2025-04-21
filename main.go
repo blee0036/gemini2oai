@@ -113,9 +113,6 @@ func (c *Cache) selectLessUseKey(keys []string) string {
 }
 
 func (c *Cache) Add(key string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	// 存在性检查
 	if entry, exists := c.data[key]; exists {
 		// 移动现有元素到链表尾部表示最近访问
