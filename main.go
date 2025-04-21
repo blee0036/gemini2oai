@@ -327,7 +327,7 @@ func createHTTPClient(token string) (*http.Client, error) {
 	if endPointIP != "" {
 		dialer := &net.Dialer{
 			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
+			KeepAlive: 1200 * time.Second,
 			LocalAddr: &net.TCPAddr{
 				IP:   net.ParseIP(endPointIP),
 				Port: 0,
@@ -1142,8 +1142,11 @@ func handleNonStreamingCompletions(w http.ResponseWriter, geminiReq *GeminiReque
 	fixCors(w)
 
 	if resp.StatusCode != http.StatusOK {
-		// Copy the error response
-		io.Copy(w, resp.Body)
+		w.WriteHeader(resp.StatusCode)
+		// Read and write error response
+		errBody, _ := io.ReadAll(resp.Body)
+		w.Write(errBody)
+		log.Printf("use : %s, err: %s", authKey, string(errBody))
 		return
 	}
 
@@ -1220,9 +1223,11 @@ func handleStreamingCompletions(w http.ResponseWriter, req *ChatCompletionsReque
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		w.WriteHeader(resp.StatusCode)
 		// Read and write error response
 		errBody, _ := io.ReadAll(resp.Body)
 		fmt.Fprintf(w, "data: %s\n\n", string(errBody))
+		log.Printf("use : %s, err: %s", authKey, string(errBody))
 		return
 	}
 
