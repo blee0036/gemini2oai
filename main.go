@@ -67,16 +67,16 @@ var (
 	authKey      string
 )
 
-func InitEnv() {
+func InitEnv(configPrefix string) {
 	// If no API keys in header, try to get from environment
-	envTokens := os.Getenv("TOKENS")
+	envTokens := os.Getenv(configPrefix + "TOKENS")
 	if envTokens != "" {
 		apiKeys := strings.Split(envTokens, ",")
 		storeKeyList = append(storeKeyList, apiKeys...)
 	}
 	keyCache = NewCache(1_000_000)
-	proxyCIDR = os.Getenv("proxy_cidr")
-	authKey = os.Getenv("AUTH_KEY")
+	proxyCIDR = os.Getenv(configPrefix + "PROXY_CIDR")
+	authKey = os.Getenv(configPrefix + "AUTH_KEY")
 }
 
 func (c *Cache) selectLessUseKey(keys []string) string {
@@ -1369,12 +1369,13 @@ func handleCompletions(w http.ResponseWriter, r *http.Request, apiKey string) {
 }
 
 func main() {
-	port := os.Getenv("PORT")
+	configPrefix := "GEMINI2OAI_"
+	port := os.Getenv(configPrefix + "PORT")
 	if port == "" {
 		port = "3000"
 	}
 
-	InitEnv()
+	InitEnv(configPrefix)
 
 	http.HandleFunc("/", handleRequest)
 	log.Printf("Server listening on port %s", port)
