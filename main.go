@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -74,7 +75,15 @@ func InitEnv(configPrefix string) {
 		apiKeys := strings.Split(envTokens, ",")
 		storeKeyList = append(storeKeyList, apiKeys...)
 	}
-	keyCache = NewCache(1_000_000)
+	cacheNumConfig := os.Getenv(configPrefix + "CACHE_COUNT")
+	cacheNum := 1000
+	if cacheNumConfig != "" {
+		cacheNumInt, err := strconv.Atoi(cacheNumConfig)
+		if err != nil {
+			cacheNum = cacheNumInt
+		}
+	}
+	keyCache = NewCache(cacheNum)
 	proxyCIDR = os.Getenv(configPrefix + "PROXY_CIDR")
 	authKey = os.Getenv(configPrefix + "AUTH_KEY")
 }

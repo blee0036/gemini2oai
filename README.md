@@ -29,12 +29,13 @@ https://github.com/blee0036/gemini2oai/releases/download/v<版本>/gemini2oai-v<
 
 通过环境变量配置服务
 
-| 环境变量                  | 必填 | 说明                              |
-|-----------------------|----|---------------------------------|
-| GEMINI2OAI_PORT       | 否  | 服务监听端口，默认 3000                  |
-| GEMINI2OAI_AUTH_KEY   | 否  | 系统密钥认证头 (与用户自备密钥二选一)            |
-| GEMINI2OAI_TOKENS     | 否  | 系统内置密钥列表，多个用逗号分隔                |
-| GEMINI2OAI_PROXY_CIDR | 否  | IPv6 CIDR 地址范围，格式：2001:db8::/32 |
+| 环境变量                   | 必填 | 说明                              |
+|------------------------|----|---------------------------------|
+| GEMINI2OAI_PORT        | 否  | 服务监听端口，默认 3000                  |
+| GEMINI2OAI_AUTH_KEY    | 否  | 系统密钥认证头 (与用户自备密钥二选一)            |
+| GEMINI2OAI_TOKENS      | 否  | 系统内置密钥列表，多个用逗号分隔                |
+| GEMINI2OAI_PROXY_CIDR  | 否  | IPv6 CIDR 地址范围，格式：2001:db8::/32 |
+| GEMINI2OAI_CACHE_COUNT | 否  | LRU缓存大小（需要轮询的key数量），默认：1000     |
 
 密钥优先级：
 
