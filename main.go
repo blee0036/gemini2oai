@@ -197,18 +197,20 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 func getAPIKeys(r *http.Request) ([]string, error) {
 	// Get API keys from Authorization header
 	auth := r.Header.Get("Authorization")
-	if auth != "" {
-		if auth == authKey {
+	parts := strings.Split(auth, " ")
+	token := ""
+	if len(parts) == 2 {
+		token = parts[1]
+	}
+	if token != "" {
+		if token == authKey {
 			if len(storeKeyList) > 0 {
 				return storeKeyList, nil
 			}
 		} else {
-			parts := strings.Split(auth, " ")
-			if len(parts) == 2 {
-				apiKeys := strings.Split(parts[1], ",")
-				if len(apiKeys) > 0 {
-					return apiKeys, nil
-				}
+			apiKeys := strings.Split(token, ",")
+			if len(apiKeys) > 0 {
+				return apiKeys, nil
 			}
 		}
 	}
@@ -1155,7 +1157,7 @@ func handleNonStreamingCompletions(w http.ResponseWriter, geminiReq *GeminiReque
 		// Read and write error response
 		errBody, _ := io.ReadAll(resp.Body)
 		w.Write(errBody)
-		log.Printf("use : %s, err: %s", authKey, string(errBody))
+		log.Printf("use : %s, err: %s", apiKey, string(errBody))
 		return
 	}
 
@@ -1236,7 +1238,7 @@ func handleStreamingCompletions(w http.ResponseWriter, req *ChatCompletionsReque
 		// Read and write error response
 		errBody, _ := io.ReadAll(resp.Body)
 		fmt.Fprintf(w, "data: %s\n\n", string(errBody))
-		log.Printf("use : %s, err: %s", authKey, string(errBody))
+		log.Printf("use : %s, err: %s", apiKey, string(errBody))
 		return
 	}
 
